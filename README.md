@@ -113,7 +113,7 @@ Diaが起動中の時はフラグを後付けできないので、一度終了�
 | ChatGPTへの登録・接続 | 成功 | 成功 |
 | ChatGPTからの読取ツール実行 | 成功 | 成功 |
 | ChatGPTからの端末実行 | 成功 | 成功 |
-| Dia操作 | タブ一覧の取得 | 未確認 |
+| Dia操作 | タブ一覧の取得 | AppleScriptでウィンドウとタブ数取得に成功（内容操作は未検証） |
 | iPhoneの通常チャット | 未確認 | 未確認 |
 
 実測：macOS 15.7.1 / Apple M1、Node 24.22.2、Desktop Relay 0.2.0（`b8b64c8`）、Desktop Commander 0.2.52、Tailscale 1.104.1。
