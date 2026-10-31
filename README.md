@@ -97,6 +97,14 @@ open -a /Applications/Dia.app --args --enable-applescript-javascript
 
 Diaが起動中の時はフラグを後付けできないので、一度終了してから実行します。
 
+M1/M4とも2026-10-31にDockのDiaタイルを `~/Applications/Dia Launcher.app` へ置換済み。普段はDockから起動するだけでフラグが付きます。ターミナルから同じランチャーを起動するなら：
+
+```bash
+open -a "$HOME/Applications/Dia Launcher.app"
+```
+
+[Dia本体の操作手順・検証結果](https://github.com/k1nyA/dia-browser-ops/blob/main/docs/OPERATIONS.md)を参照してください。2026-10-31、両Macで7項目のローカルテストフォーム入力・読み戻し・タブ維持・送信0回を確認し、Dia専用MCP実装を`k1nyA/dia-browser-ops/main` の`e4424a9`へ統合。さらにM4では実際のUTAGE申込フォームも入力・読戻し済み（送信は本人が実施し、後からLINE受付返信を確認）。**これはブラウザ操作の実証であり、ChatGPTの定期実行での継続アクセスやLINE拡張画面の読取を保証しません。**
+
 ## 知っておくこと
 
 - URL自体が鍵です。チャット、GitHub、スクリーンショットに載せないでください。全ツール用のURLなので、知っている人はMacのファイル操作と端末実行ができます。
@@ -113,7 +121,7 @@ Diaが起動中の時はフラグを後付けできないので、一度終了�
 | ChatGPTへの登録・接続 | 成功 | 成功 |
 | ChatGPTからの読取ツール実行 | 成功 | 成功 |
 | ChatGPTからの端末実行 | 成功 | 成功 |
-| Dia操作 | タブ一覧の取得 | AppleScriptでウィンドウとタブ数取得に成功（内容操作は未検証） |
+| Dia操作 | AppleScript＋JavaScriptで実フォームの読み取り・入力・検証成功 | 同左（ローカルテストフォーム） |
 | iPhoneの通常チャット | 未確認 | 未確認 |
 
 実測：macOS 15.7.1 / Apple M1、Node 24.22.2、Desktop Relay 0.2.0（`b8b64c8`）、Desktop Commander 0.2.52、Tailscale 1.104.1。
