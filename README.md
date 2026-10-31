@@ -1,145 +1,123 @@
 # ChatGPTからMacを操作する Desktop Relay 再現ガイド
 
-[実験記録](docs/20261031-1451_M4実験記録.md) · [M1移植チェックリスト](docs/20261031-1451_M1移植チェックリスト.md) · [実機の切り分け表](docs/20261031-1451_検証境界.md)
+[実験記録](docs/20261031-1451_M4実験記録.md) · [2台目のMacへの追加](docs/20261031-1451_M1移植チェックリスト.md) · [確認の切り分け表](docs/20261031-1451_検証境界.md)
 
-[HashemKhalifa/desktop-relay](https://github.com/HashemKhalifa/desktop-relay) を使って、通常のChatGPTからmacOS上の **Desktop Commander Local MCP** を呼び出すための非公式・再現可能な手順です。
+[HashemKhalifa/desktop-relay](https://github.com/HashemKhalifa/desktop-relay) を使い、通常のChatGPTからMac上の **Desktop Commander Local MCP** を呼び出す非公式の手順です。本体は上流のMITライセンスのソフトウェアをそのまま使います。
 
-**このリポジトリはDesktop Relay本体のフォークではありません。** 本体は上流のMITライセンスのソフトウェアをそのまま使用します。利用者自身のMacで認証付きHTTPS中継を運用するため、公式READMEとSECURITYも必ず読んでください。
+できあがる使い方は次の2つだけです。
 
-## 確認できたこと・できていないこと
+```bash
+desktop-relay       # 起動。Ctrl+C で停止
+desktop-relay url   # ChatGPT に登録する URL をクリップボードへ
+```
 
-2026年10月31日、M4 MacBook Airから接続したChatGPTのカスタムMCPアプリで `get_config` と `start_process` が成功しました。Mac上の `date`、`hostname`、さらに `osascript` による **DiaのタブURL一覧取得**まで確認できています。
-
-- 実測：macOS / Apple Silicon、Node 24.22.2、Desktop Relay 0.2.0、Desktop Commander 0.2.52、上流Git commit `b8b64c8`。
-- **未検証**：Diaのフォーム入力・送信、入力後／送信後のタブ保持、iPhoneのChatGPT、別のMacでの接続、再起動後の自動復旧。
-- これはRemote Desktop Commanderの契約や月間利用枠を変更する仕組みではありません。**別のローカルMCPと自己管理の中継**です。ChatGPT側の制限・電気代・ドメイン代・クラウド利用料などは別に考えます。
+常駐はしません。ドメインも不要です。使う時だけターミナルで起動します。
 
 ```mermaid
 flowchart TD
-  A[ChatGPT カスタムMCPアプリ] -->|認証付きHTTPS| B[Cloudflare Tunnel]
+  A[ChatGPT カスタムMCPアプリ] -->|HTTPS| B[Tailscale Funnel]
   B -->|ローカル転送| C[Mac上のDesktop Relay]
   C -->|MCP stdio| D[Desktop Commander Local]
-  D --> E[許可されたファイル・ターミナル操作]
-  E --> F[例: AppleScriptでDiaにアクセス]
+  D --> E[Macのファイル・ターミナル操作]
+  E --> F[例: AppleScriptでDiaを操作]
 ```
 
-## 導入前の要件
+## 必要なもの
 
-- macOS、Node.js **24以上**、pnpm **10**、Git、`cloudflared`。
-- 安定稼働にはCloudflare管理下の自分のドメインと名前付きTunnel（上流推奨）。
-- ChatGPTからカスタムMCPアプリを追加できる利用環境。プラン・組織ポリシーによって登録できない場合があります。
-- Macが起動しログインしていること。Dia操作には、macOSが要求するAppleScriptの許可が必要です。
+- macOS（Apple Silicon）、Git
+- Tailscale（CLIを使える状態でログイン済み）
+- カスタムMCPアプリを追加できるChatGPT
 
-**実測した落とし穴：実験M4のRelayはNode 24で動作していましたが、通常Terminalの既定はNode 22・pnpm 12でした。** インストール時の実行PATHでNode 24以上とpnpm 10を必ず満たしてください。読み取り専用の検査スクリプトは両方のmajor versionを検査します。
+これはRemote Desktop Commanderの契約や月間利用枠を変える仕組みではなく、別のローカルMCPと自前の中継です。
 
-**最初は読み取り専用ツールだけを公開してください。** Terminal実行はMac利用者とほぼ同等の影響を持つことがあります。
+## 1. 導入
 
-前提条件だけを確認する読み取り専用スクリプト：
+Node 24.22.2は専用フォルダに置くので、普段のNodeやHomebrewには影響しません。
 
 ```bash
-bash scripts/check_prereqs.sh
+R="$HOME/.local/share/desktop-relay"
+mkdir -p "$R/node"
+curl -fsSL https://nodejs.org/dist/v24.22.2/node-v24.22.2-darwin-arm64.tar.gz \
+  | tar xz -C "$R/node" --strip-components=1
+
+git clone https://github.com/HashemKhalifa/desktop-relay.git "$R/app"
+git -C "$R/app" checkout b8b64c8
+cd "$R/app"
+PATH="$R/node/bin:$PATH" COREPACK_HOME="$R/corepack" \
+  COREPACK_ENABLE_DOWNLOAD_PROMPT=0 PUPPETEER_SKIP_DOWNLOAD=1 \
+  corepack pnpm install --frozen-lockfile
 ```
 
-## 1. 上流本体の取得
+このリポジトリの [`scripts/desktop-relay`](scripts/desktop-relay) を、PATHの通った場所へ置きます。
 
 ```bash
-git clone https://github.com/HashemKhalifa/desktop-relay.git
-cd desktop-relay
-pnpm install --frozen-lockfile
+mkdir -p ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/k1nyA/chatgpt-desktop-relay-repro/main/scripts/desktop-relay \
+  -o ~/.local/bin/desktop-relay
+chmod +x ~/.local/bin/desktop-relay
 ```
 
-実験時のソースと厳密に揃えるには `git checkout b8b64c8` を追加できます。ただし古い依存関係の安全性修正を見逃さないよう、実運用では上流の最新情報も確認してください。
+`~/.local/bin` がPATHにない場合は、シェルの設定に追加します。上流の `install.sh` はLaunchAgentを作るので、この手順では使いません。
 
-## 2. HTTPS中継を構築する
-
-以下は実験時に用いた一時TunnelのURLを写したものではなく、**上流が公開する継続運用向けの名前付きTunnelの手順**です。`mcp.example.com` は自分で管理するドメインに置き換えてください。
+## 2. 起動してURLを出す
 
 ```bash
-cloudflared tunnel login
-cloudflared tunnel create desktop-relay
-cloudflared tunnel route dns desktop-relay mcp.example.com
+desktop-relay
 ```
 
-Tunnel UUIDが発行されたら、`~/.cloudflared/config.yml` をMac上で作ります。
+初回の起動で全ツール用のURLが発行され、固定で保存されます。TailscaleがFunnelの承認を求めた時は、表示されたURLをブラウザで開いて許可します。
 
-```yaml
-tunnel: <TUNNEL_UUID>
-credentials-file: /Users/<MAC_USER>/.cloudflared/<TUNNEL_UUID>.json
-ingress:
-  - hostname: mcp.example.com
-    service: http://127.0.0.1:8788
-  - service: http_status:404
-```
-
-この設定とTunnel認証ファイルはGitHubへコピーしないでください。
-
-## 3. Relayをセットアップして検収する
-
-インストールスクリプトはMacにLaunchAgentを作るため、実行前に上流ソースを確認してください。
+別のターミナルで次を実行します。
 
 ```bash
-cloudflared tunnel ingress validate
-./install.sh --edge cloudflare --domain mcp.example.com
-scripts/verify.sh https://mcp.example.com
-bin/dc-relayctl doctor
+desktop-relay url
 ```
 
-`doctor` でRelayの接続待受が `127.0.0.1:8788` に限定され、LANへ直接公開されていないことを確認します。接続できなければ次を調べます。
+URLがクリップボードに入ります。
+
+## 3. ChatGPTに登録する
+
+1. ChatGPTのカスタムMCPアプリ作成画面を開きます。名前は `DesktopRelayM1` のようにMacが分かるものにします。
+2. Server URLにURLを貼り、認証は「No authentication」を選びます。URLの中に認証情報が入っています。
+3. 新しいチャットでアプリを選び、「`hostname` を実行して」と頼みます。
+
+ツールの定義を更新した時は、アプリの **Manage / Refresh tools** のあと新しいチャットで確認します。
+
+## 4. 止める
+
+起動したターミナルで Ctrl+C を押します。Relay本体とFunnelの公開が一緒に止まります。URLは次の起動でそのまま使えます。
+
+## Diaを操作する場合
+
+Diaのページ上でJavaScriptを実行するには、起動フラグが必要です。
 
 ```bash
-bin/dc-relayctl status
-bin/dc-relayctl doctor
-cloudflared tunnel info desktop-relay
+open -a /Applications/Dia.app --args --enable-applescript-javascript
 ```
 
-Macのスリープ・ログアウト・ネットワーク切断中に利用できるとは限りません。
+Diaが起動中の時はフラグを後付けできないので、一度終了してから実行します。
 
-## 4. ChatGPT用の接続を作る
+## 知っておくこと
 
-**URLの秘密部分自体が認証資格となります。** Mac上のターミナルでのみ発行し、表示された値をチャット、GitHub、CIログ、共有スクリーンショットへ貼らないでください。
+- URL自体が鍵です。チャット、GitHub、スクリーンショットに載せないでください。全ツール用のURLなので、知っている人はMacのファイル操作と端末実行ができます。
+- 漏れた時は `bin/dc-relayctl revoke` で失効させ、`~/.config/desktop-relay/chatgpt-url` を消して起動し直すと新しいURLになります。
+- Desktop Commanderは `~/.claude-server-commander` の設定を共有します。同じMacでRemote Desktop Commanderを動かしている場合は、先に `config.json` を控えておくと安心です。
+- 起動中でも、Macのスリープやネットワーク切断の間は使えません。
 
-まず読み取り用の例：
+## 確認状況（2026-10-31）
 
-```bash
-bin/dc-relayctl mint --name chatgpt-readonly --kind path-only --tools list_directory,read_file
-```
+| 項目 | M4 | M1 |
+| --- | --- | --- |
+| 構成 | Quick Tunnel（試験時） | Tailscale Funnel＋本コマンド |
+| Mac内のMCP呼び出し（`start_process` まで） | 成功 | 成功 |
+| ChatGPTへの登録・接続 | 成功 | 成功 |
+| ChatGPTからの読取ツール実行 | 成功 | 成功 |
+| ChatGPTからの端末実行 | 成功 | 成功 |
+| Dia操作 | タブ一覧の取得 | 未確認 |
+| iPhoneの通常チャット | 未確認 | 未確認 |
 
-上流バージョンで利用可能なツール名や指定方法は `bin/dc-relayctl` のヘルプで確認してください。
-
-ChatGPTのカスタムMCPアプリ作成画面で、Macが表示した秘密URLを **Server URL** に設定します。「No authentication」と表示される場合も、URLパスに含まれる認証資格で照合されます。ここ以外に資格をコピーしないでください。
-
-登録後、新しいチャットで該当アプリを選び、読み取りだけを試します。アプリ一覧で見えることと、**実ツール呼出が成功することは別**です。ツールの追加後はアプリの **Manage / Refresh tools** 等で新しい定義を取得し、再度新規チャットから確認します。
-
-[上流のChatGPT接続手順](https://github.com/HashemKhalifa/desktop-relay#chatgpt) ／ [OpenAIカスタムMCPヘルプ](https://help.openai.com/en/articles/12584461-developer-mode-and-full-mcp-connectors-in-chatgpt)
-
-## 5. 実際にMacを操作する場合
-
-読み取りが実証できた後、対象のMac・許可範囲・リスクを確認して、必要な操作ツールだけを公開します。いきなり `--tools all` のような広い権限を付けることは推奨しません。
-
-Diaブラウザを操作する場合は特に次を区別します。
-
-1. AppleScriptの辞書が存在する・タブが読める。
-2. 意図したDiaタブを開け、URLとタイトルを読み戻せる。
-3. フォームへ入力し、その実画面を本人が確認できる。
-4. 本人の承認に基づいて送信を一度だけ行う。
-5. **送信後の成功・エラー画面を同じDiaタブに残せる。**
-
-今回の実験では **1のみ検証済み** です。未完成のDia専用MCPアダプタを、使える機能として紹介していません。
-
-## 6. セキュリティと公開禁止情報
-
-- Mac側のユーザー権限で操作が行われます。許可したMCPツールが強ければ危険も大きくなります。
-- トークンを含んだ完全URL、Tunnelの資格ファイル、Relayの `config.json` / `principals.json` / `dashboard.key`、ログ、ブラウザ履歴は公開しない。
-- このリポジトリへ実際のMacホームパス・個人メール・個別のChatGPT接続URLは書かない。
-- 端末の保護、HTTPS、認証、最小権限の公開、資格情報の失効手段、復旧手順をセットで設計する。
-- 一時Tunnel（Quick Tunnel）は学習用に便利でも固定URL・常設運用を保証しません。
-- 上流のリポジトリのMITライセンス表記を消して二次配布しない。
-- まずテスト用フォルダと読み取り機能で確認し、送信・削除・支払いを伴う操作へ一足飛びに進まない。
-
-## 他のMacへの展開
-
-[M1移植チェックリスト](docs/20261031-1451_M1移植チェックリスト.md) にまとめました。**M4の秘密URLや資格ファイルはM1にコピーせず、M1専用に発行**します。
+実測：macOS 15.7.1 / Apple M1、Node 24.22.2、Desktop Relay 0.2.0（`b8b64c8`）、Desktop Commander 0.2.52、Tailscale 1.104.1。
 
 ## English summary
 
-Independent, non-official reproduction notes for connecting ChatGPT custom MCP to Desktop Commander Local on macOS using the open-source [Desktop Relay](https://github.com/HashemKhalifa/desktop-relay). Tested: one Apple Silicon Mac, remote commands and Dia tab enumeration via AppleScript. Not yet tested: a second Mac, iOS, form submission or browser-state persistence. Treat credential-bearing endpoint URLs as secrets.
+Independent, non-official notes for connecting ChatGPT custom MCP to Desktop Commander Local on macOS with the open-source [Desktop Relay](https://github.com/HashemKhalifa/desktop-relay), Tailscale Funnel and a small foreground command: `desktop-relay` starts it, Ctrl+C stops it, `desktop-relay url` copies the connector URL. The URL grants all tools, so treat it as a secret.

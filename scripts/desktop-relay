@@ -1,0 +1,114 @@
+#!/bin/bash
+# desktop-relay        : 前面で起動し、Ctrl+C で止める
+# desktop-relay url    : ChatGPT に登録する URL をクリップボードへ入れる
+# 常駐はしない。URL はこのコマンドが止まっている間は外から使えない。
+set -u
+
+ROOT="$HOME/.local/share/desktop-relay"
+NODE="$ROOT/node/bin/node"
+APP="$ROOT/app"
+CONFIG_DIR="$HOME/.config/desktop-relay"
+CONFIG="$CONFIG_DIR/config.json"
+URL_FILE="$CONFIG_DIR/chatgpt-url"
+SOCK="$CONFIG_DIR/control.sock"
+PORT=8788
+TAILSCALE="$(command -v tailscale || echo /Applications/Tailscale.app/Contents/MacOS/Tailscale)"
+
+die() { echo "desktop-relay: $*" >&2; exit 1; }
+
+public_host() {
+  "$TAILSCALE" status --json 2>/dev/null \
+    | "$NODE" -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).Self.DNSName.replace(/\.$/,'')))"
+}
+
+write_config() {
+  local host="$1"
+  umask 077
+  mkdir -p "$CONFIG_DIR"
+  chmod 700 "$CONFIG_DIR"
+  HOST="$host" APP="$APP" NODE="$NODE" CONFIG_DIR="$CONFIG_DIR" "$NODE" -e '
+    const e = process.env;
+    console.log(JSON.stringify({
+      edge: { kind: "none" },
+      publicBaseUrl: `https://${e.HOST}`,
+      listenHost: "127.0.0.1",
+      listenPort: 8788,
+      upstreamCmd: [e.NODE, `${e.APP}/node_modules/@wonderwhy-er/desktop-commander/dist/index.js`],
+      upstreamCwd: e.HOME,
+      secretsPath: `${e.CONFIG_DIR}/principals.json`,
+      auditPath: `${e.CONFIG_DIR}/audit.jsonl`,
+      alertsPath: `${e.CONFIG_DIR}/alerts.jsonl`,
+      controlSockPath: `${e.CONFIG_DIR}/control.sock`,
+    }, null, 2));' > "$CONFIG"
+  [ -f "$CONFIG_DIR/principals.json" ] \
+    || echo '{"version":1,"principals":[],"credentials":[]}' > "$CONFIG_DIR/principals.json"
+}
+
+# 秘密は平文で一度しか返らないので、発行時に所有者のみ読めるファイルへ保存する
+mint_url() {
+  local host="$1" secret
+  secret="$(DESKTOP_RELAY_CONTROL="$SOCK" "$NODE" "$APP/src/ctl.ts" mint \
+      --name chatgpt --kind path-only --tools all --rate 300 \
+    | "$NODE" -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).secret))")"
+  [ -n "$secret" ] || return 1
+  umask 077
+  echo "https://$host/$secret/mcp" > "$URL_FILE"
+}
+
+cmd_url() {
+  [ -f "$URL_FILE" ] || die "URL がまだありません。先に desktop-relay を1回起動してください"
+  tr -d '\n' < "$URL_FILE" | pbcopy
+  echo "URL をクリップボードへ入れました。ChatGPT の Server URL に貼ってください"
+}
+
+DAEMON_PID=""
+FUNNEL_ON=0
+cleanup() {
+  trap - INT TERM EXIT
+  [ "$FUNNEL_ON" = 1 ] && "$TAILSCALE" funnel --https=443 off >/dev/null 2>&1
+  if [ -n "$DAEMON_PID" ]; then
+    kill -TERM "$DAEMON_PID" 2>/dev/null
+    wait "$DAEMON_PID" 2>/dev/null
+  fi
+  echo "desktop-relay: 停止しました"
+}
+
+cmd_start() {
+  lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1 && die "$PORT 番は使用中です（起動済みかもしれません）"
+  local host
+  host="$(public_host)"
+  [ -n "$host" ] || die "Tailscale の接続を確認してください"
+  write_config "$host"
+
+  trap cleanup EXIT
+  trap 'exit 0' INT TERM
+  DESKTOP_RELAY_CONFIG="$CONFIG" "$NODE" "$APP/src/daemon.ts" &
+  DAEMON_PID=$!
+
+  local i
+  for i in $(seq 1 50); do
+    lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1 && break
+    kill -0 "$DAEMON_PID" 2>/dev/null || die "本体が起動できませんでした"
+    sleep 0.2
+  done
+  lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1 || die "本体の待受を確認できませんでした"
+
+  if [ ! -f "$URL_FILE" ]; then
+    mint_url "$host" || die "URL を発行できませんでした"
+  fi
+
+  if [ "${DESKTOP_RELAY_NO_FUNNEL:-0}" != 1 ]; then
+    # 未承認の時は tailscale が承認URLを表示して待つので、出力は捨てない
+    "$TAILSCALE" funnel --bg "$PORT" || die "Tailscale Funnel を開始できませんでした"
+    FUNNEL_ON=1
+  fi
+
+  echo "desktop-relay: 起動しました。URL は desktop-relay url、停止は Ctrl+C"
+  wait "$DAEMON_PID"
+}
+
+case "${1:-}" in
+  "")  cmd_start ;;
+  url) cmd_url ;;
+  *)   echo "使い方: desktop-relay [url]" >&2; exit 2 ;;
+esac
